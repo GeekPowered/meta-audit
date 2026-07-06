@@ -26,6 +26,10 @@ export async function POST(_request: Request, { params }: Params) {
     include: { page: true },
   });
 
+  if (approved.length === 0) {
+    return NextResponse.json({ error: "no approved suggestions to publish" }, { status: 400 });
+  }
+
   const itemsByCollection = new Map<string, string[]>();
 
   for (const suggestion of approved) {

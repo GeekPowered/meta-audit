@@ -9,6 +9,8 @@ import ReviewRow, { type ReviewRowData } from "./ReviewRow";
 
 type Client = { id: string; name: string; domain: string | null };
 type Job = { id: string; status: "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED"; errorMessage: string | null };
+type StageResult = { staged: number; failed: number; results: { url: string; result: string; error?: string }[] };
+type GoLiveResult = { collectionsPublished: number; pagesLive: number };
 
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
 const PAGE_SIZE = 25;
@@ -50,6 +52,10 @@ export default function ClientPage() {
   const [sortBy, setSortBy] = useState<"severity" | "url">("severity");
   const [actionError, setActionError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [staging, setStaging] = useState(false);
+  const [stageResult, setStageResult] = useState<StageResult | null>(null);
+  const [goingLive, setGoingLive] = useState(false);
+  const [goLiveResult, setGoLiveResult] = useState<GoLiveResult | null>(null);
 
   const flagTypes = useMemo(() => {
     const set = new Set<string>();
@@ -77,6 +83,11 @@ export default function ClientPage() {
     }
     return [...filtered].sort((a, b) => a.url.localeCompare(b.url));
   }, [rows, severityFilter, statusFilter, flagTypeFilter, sortBy]);
+
+  const approvedCount = useMemo(
+    () => rows?.filter((r) => r.suggestion?.status === "APPROVED").length ?? 0,
+    [rows]
+  );
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
@@ -122,6 +133,41 @@ export default function ClientPage() {
     }
   }
 
+  async function stageChanges() {
+    setActionError(null);
+    setStageResult(null);
+    setStaging(true);
+    try {
+      const result = await apiRequest<StageResult>(`/api/clients/${clientId}/publish`, "POST");
+      setStageResult(result);
+      mutateRows();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Staging failed");
+    } finally {
+      setStaging(false);
+    }
+  }
+
+  async function goLive() {
+    const confirmed = window.confirm(
+      `This publishes the ENTIRE Webflow site live for ${client?.name ?? "this client"} — not just these ` +
+        `${approvedCount} approved change(s). Anything else pending in the Designer goes live too. Continue?`
+    );
+    if (!confirmed) return;
+
+    setActionError(null);
+    setGoLiveResult(null);
+    setGoingLive(true);
+    try {
+      const result = await apiRequest<GoLiveResult>(`/api/clients/${clientId}/publish/go-live`, "POST");
+      setGoLiveResult(result);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Go live failed");
+    } finally {
+      setGoingLive(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-7xl w-full px-6 py-8">
       <Link href="/" className="text-sm text-zinc-500 hover:underline">
@@ -149,6 +195,49 @@ export default function ClientPage() {
       </div>
 
       {actionError && <p className="mb-4 text-sm text-red-600">{actionError}</p>}
+
+      <div className="mb-6 rounded border border-amber-300 bg-amber-50 p-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={stageChanges}
+            disabled={staging || approvedCount === 0}
+            className="rounded bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-40"
+          >
+            {staging ? "Staging…" : `Stage Changes (${approvedCount} approved)`}
+          </button>
+          <span className="text-xs text-zinc-600">Writes approved changes into Webflow as drafts. Not live yet.</span>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            onClick={goLive}
+            disabled={goingLive || approvedCount === 0}
+            className="rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-40"
+          >
+            {goingLive ? "Publishing…" : "Go Live"}
+          </button>
+          <span className="text-xs text-zinc-600">
+            Publishes the entire site — including anything else pending in the Designer.
+          </span>
+        </div>
+
+        {stageResult && (
+          <p className="mt-2 text-sm">
+            Staged {stageResult.staged}, failed {stageResult.failed}.
+            {stageResult.failed > 0 && (
+              <span className="text-red-700">
+                {" "}
+                Failed: {stageResult.results.filter((r) => r.result === "FAIL").map((r) => r.url).join(", ")}
+              </span>
+            )}
+          </p>
+        )}
+        {goLiveResult && (
+          <p className="mt-2 text-sm">
+            Published {goLiveResult.pagesLive} page(s) live, across {goLiveResult.collectionsPublished} CMS
+            collection(s).
+          </p>
+        )}
+      </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-4 text-sm">
         <label className="flex items-center gap-1">
