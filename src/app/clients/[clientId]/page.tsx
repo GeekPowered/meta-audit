@@ -11,6 +11,7 @@ type Client = { id: string; name: string; domain: string | null };
 type Job = { id: string; status: "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED"; errorMessage: string | null };
 
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
+const PAGE_SIZE = 25;
 
 function latestJobStatusText(jobs: Job[] | undefined): string {
   if (!jobs || jobs.length === 0) return "never run";
@@ -48,6 +49,7 @@ export default function ClientPage() {
   const [flagTypeFilter, setFlagTypeFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState<"severity" | "url">("severity");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const flagTypes = useMemo(() => {
     const set = new Set<string>();
@@ -75,6 +77,10 @@ export default function ClientPage() {
     }
     return [...filtered].sort((a, b) => a.url.localeCompare(b.url));
   }, [rows, severityFilter, statusFilter, flagTypeFilter, sortBy]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pagedRows = filteredRows.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
 
   async function runCrawl() {
     setActionError(null);
@@ -214,7 +220,16 @@ export default function ClientPage() {
       </div>
 
       <div className="overflow-x-auto rounded border border-zinc-200">
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[14%]" />
+            <col className="w-[16%]" />
+            <col className="w-[10%]" />
+            <col className="w-[18%]" />
+            <col className="w-[18%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+          </colgroup>
           <thead className="bg-zinc-50 text-left">
             <tr>
               <th className="px-3 py-2 font-medium">URL</th>
@@ -227,7 +242,7 @@ export default function ClientPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
-            {filteredRows.map((row) => (
+            {pagedRows.map((row) => (
               <ReviewRow key={row.pageId} row={row} onChanged={() => mutateRows()} />
             ))}
           </tbody>
@@ -236,6 +251,34 @@ export default function ClientPage() {
           <p className="px-3 py-6 text-center text-sm text-zinc-500">No pages match the current filters.</p>
         )}
       </div>
+
+      {filteredRows.length > 0 && (
+        <div className="mt-3 flex items-center justify-between text-sm text-zinc-600">
+          <span>
+            {currentPage * PAGE_SIZE + 1}-{Math.min((currentPage + 1) * PAGE_SIZE, filteredRows.length)} of{" "}
+            {filteredRows.length}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={currentPage === 0}
+              className="rounded border border-zinc-300 px-2 py-1 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <span>
+              Page {currentPage + 1} of {pageCount}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={currentPage >= pageCount - 1}
+              className="rounded border border-zinc-300 px-2 py-1 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
