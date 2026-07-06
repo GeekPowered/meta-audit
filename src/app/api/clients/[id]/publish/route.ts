@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { resolveWebflowTarget } from "@/lib/resolveWebflowTarget";
-import { updatePageSeo, updateCollectionItemFields } from "@/lib/webflowClient";
+import { listAllPages, updatePageSeo, updateCollectionItemFields } from "@/lib/webflowClient";
+import { mapWithConcurrency } from "@/lib/concurrency";
 
 type Params = { params: Promise<{ id: string }> };
+
+// Vercel default (60s on most paid tiers) isn't enough for hundreds of
+// suggestions even with concurrency — bump explicitly. Clamped/ignored on
+// tiers that don't allow it.
+export const maxDuration = 300;
 
 // Stages approved suggestions into Webflow (page/CMS field updates) WITHOUT
 // publishing the site live. Webflow's publish call isn't scoped to just our
@@ -25,25 +31,26 @@ export async function POST(_request: Request, { params }: Params) {
     include: { page: true },
   });
 
-  const results = [];
+  // Fetch the site's page list ONCE and reuse it for every suggestion below.
+  // resolveWebflowTarget used to fetch this internally per-call, which turned
+  // into an N+1 (hundreds of full paginated re-fetches) and timed out the route.
+  const pages = client.webflowSiteId ? await listAllPages(client.webflowSiteId) : [];
 
-  for (const suggestion of approved) {
+  const results = await mapWithConcurrency(approved, 8, async (suggestion) => {
     const title = suggestion.editedTitle ?? suggestion.suggestedTitle;
     const description = suggestion.editedDescription ?? suggestion.suggestedDescription;
 
     if (!title || !description) {
       await logPublish(suggestion.pageId, "FAIL", "Missing title or description on the approved suggestion");
-      results.push({ pageId: suggestion.pageId, url: suggestion.page.url, result: "FAIL" });
-      continue;
+      return { pageId: suggestion.pageId, url: suggestion.page.url, result: "FAIL" as const };
     }
 
     try {
-      const target = await resolveWebflowTarget(client.webflowSiteId, suggestion.page.url);
+      const target = await resolveWebflowTarget(pages, suggestion.page.url);
 
       if (!target) {
         await logPublish(suggestion.pageId, "FAIL", "Could not match this URL to a Webflow page or CMS item");
-        results.push({ pageId: suggestion.pageId, url: suggestion.page.url, result: "FAIL" });
-        continue;
+        return { pageId: suggestion.pageId, url: suggestion.page.url, result: "FAIL" as const };
       }
 
       if (target.type === "page") {
@@ -60,13 +67,13 @@ export async function POST(_request: Request, { params }: Params) {
           `Staged CMS item update (collection ${target.collectionId}, item ${target.itemId})`
         );
       }
-      results.push({ pageId: suggestion.pageId, url: suggestion.page.url, result: "SUCCESS" });
+      return { pageId: suggestion.pageId, url: suggestion.page.url, result: "SUCCESS" as const };
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       await logPublish(suggestion.pageId, "FAIL", message);
-      results.push({ pageId: suggestion.pageId, url: suggestion.page.url, result: "FAIL", error: message });
+      return { pageId: suggestion.pageId, url: suggestion.page.url, result: "FAIL" as const, error: message };
     }
-  }
+  });
 
   return NextResponse.json({
     staged: results.filter((r) => r.result === "SUCCESS").length,

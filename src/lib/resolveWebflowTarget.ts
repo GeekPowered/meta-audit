@@ -1,4 +1,4 @@
-import { listAllPages, findCollectionItemBySlug } from "@/lib/webflowClient";
+import { findCollectionItemBySlug, type WebflowPage } from "@/lib/webflowClient";
 
 export type WebflowTarget =
   | { type: "page"; pageId: string }
@@ -22,15 +22,18 @@ function extractBoundFieldSlug(bindingString: string | undefined): string | null
 // Resolves a crawled Page.url to either a static Webflow page or a CMS collection
 // item, using the site's real page list as the source of truth. Returns null if
 // no confident match is found — callers must treat that as "skip, don't guess."
-export async function resolveWebflowTarget(siteId: string, pageUrl: string): Promise<WebflowTarget> {
+//
+// Takes the site's page list as a parameter rather than fetching it internally —
+// callers processing many suggestions must fetch it ONCE and reuse it. Fetching
+// per-call turned into an N+1 (451 approved suggestions = 451 full paginated
+// re-fetches of the site's page list), which is what timed out the publish routes.
+export async function resolveWebflowTarget(pages: WebflowPage[], pageUrl: string): Promise<WebflowTarget> {
   let pathname: string;
   try {
     pathname = new URL(pageUrl).pathname.replace(/\/+$/, "") || "/";
   } catch {
     return null;
   }
-
-  const pages = await listAllPages(siteId);
 
   const staticMatch = pages.find(
     (p) => !p.collectionId && normalizePath(p.publishedPath) === pathname
