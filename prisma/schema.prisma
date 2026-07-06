@@ -1,0 +1,153 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Client {
+  id                String   @id @default(cuid())
+  name              String
+  // Crawl start URL for Screaming Frog, e.g. "https://example.com" (Phase 2).
+  domain            String?
+  webflowSiteId     String?
+  gscPropertyId     String?
+  // Map of page path -> target keyword, e.g. { "/services/roofing": "roof repair phoenix" }
+  keywordMap        Json?
+  brandVoiceProfile String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  pages          Page[]
+  crawlJobs      CrawlJob[]
+  suggestionJobs SuggestionJob[]
+}
+
+model Page {
+  id                 String    @id @default(cuid())
+  clientId           String
+  client             Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  url                String
+  currentTitle       String?
+  currentDescription String?
+  h1                 String?
+  statusCode         Int?
+  lastCrawledAt      DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  auditFlags  AuditFlag[]
+  suggestions Suggestion[]
+  publishLogs PublishLog[]
+
+  @@unique([clientId, url])
+  @@index([clientId])
+}
+
+enum FlagSeverity {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model AuditFlag {
+  id        String       @id @default(cuid())
+  pageId    String
+  page      Page         @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  flagType  String
+  severity  FlagSeverity
+  reason    String
+  createdAt DateTime     @default(now())
+
+  @@index([pageId])
+  @@index([severity])
+}
+
+enum SuggestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EDITED
+}
+
+model Suggestion {
+  id                   String           @id @default(cuid())
+  pageId               String
+  page                 Page             @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  suggestedTitle       String?
+  suggestedDescription String?
+  rationale            String?
+  status               SuggestionStatus @default(PENDING)
+  editedTitle          String?
+  editedDescription    String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@index([pageId])
+  @@index([status])
+}
+
+enum PublishResult {
+  SUCCESS
+  FAIL
+}
+
+model PublishLog {
+  id       String        @id @default(cuid())
+  pageId   String
+  page     Page          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pushedAt DateTime      @default(now())
+  result   PublishResult
+  details  String?
+
+  @@index([pageId])
+}
+
+// Shared by CrawlJob and SuggestionJob — both are polled and driven by the
+// local agent (see Phase 2 and Phase 4), which claims a QUEUED job by
+// flipping it to RUNNING, then reports back COMPLETE/FAILED.
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+model CrawlJob {
+  id           String    @id @default(cuid())
+  clientId     String
+  client       Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  status       JobStatus @default(QUEUED)
+  requestedAt  DateTime  @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+  errorMessage String?
+  pagesFound   Int?
+
+  @@index([clientId])
+  @@index([status])
+}
+
+// Drives Phase 4 (Claude-powered rewrite suggestions). The agent repeatedly
+// calls the process-batch endpoint until pagesProcessed reaches pagesTotal,
+// keeping each individual request short enough for a serverless function.
+model SuggestionJob {
+  id             String    @id @default(cuid())
+  clientId       String
+  client         Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  status         JobStatus @default(QUEUED)
+  requestedAt    DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  errorMessage   String?
+  pagesTotal     Int       @default(0)
+  pagesProcessed Int       @default(0)
+
+  @@index([clientId])
+  @@index([status])
+}
