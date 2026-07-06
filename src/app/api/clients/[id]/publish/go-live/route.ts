@@ -43,7 +43,7 @@ export async function POST(_request: Request, { params }: Params) {
 
   const itemsByCollection = new Map<string, string[]>();
 
-  const targets = await mapWithConcurrency(approved, 8, (suggestion) =>
+  const targets = await mapWithConcurrency(approved, 3, (suggestion) =>
     resolveWebflowTarget(pages, suggestion.page.url)
   );
 

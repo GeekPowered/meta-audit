@@ -11,16 +11,37 @@ function authHeaders() {
   };
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Webflow's rate limit (60 req/min on most plans) is easy to blow through when
+// staging hundreds of suggestions concurrently. Retry 429s honoring Retry-After
+// (falling back to exponential backoff) instead of failing the whole item.
 async function webflowRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${WEBFLOW_API_BASE}${path}`, {
-    ...options,
-    headers: { ...authHeaders(), ...options.headers },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Webflow API ${options.method ?? "GET"} ${path} failed: ${res.status} ${body}`);
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await fetch(`${WEBFLOW_API_BASE}${path}`, {
+      ...options,
+      headers: { ...authHeaders(), ...options.headers },
+    });
+
+    if (res.status === 429 && attempt < maxAttempts) {
+      const retryAfterHeader = Number(res.headers.get("retry-after"));
+      const delayMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+        ? retryAfterHeader * 1000
+        : 1000 * 2 ** (attempt - 1);
+      await sleep(delayMs);
+      continue;
+    }
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Webflow API ${options.method ?? "GET"} ${path} failed: ${res.status} ${body}`);
+    }
+    return res.json();
   }
-  return res.json();
+  throw new Error(`Webflow API ${options.method ?? "GET"} ${path} failed: exhausted retries on 429`);
 }
 
 export type WebflowPage = {

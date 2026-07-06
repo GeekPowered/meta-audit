@@ -36,7 +36,7 @@ export async function POST(_request: Request, { params }: Params) {
   // into an N+1 (hundreds of full paginated re-fetches) and timed out the route.
   const pages = client.webflowSiteId ? await listAllPages(client.webflowSiteId) : [];
 
-  const results = await mapWithConcurrency(approved, 8, async (suggestion) => {
+  const results = await mapWithConcurrency(approved, 3, async (suggestion) => {
     const title = suggestion.editedTitle ?? suggestion.suggestedTitle;
     const description = suggestion.editedDescription ?? suggestion.suggestedDescription;
 
