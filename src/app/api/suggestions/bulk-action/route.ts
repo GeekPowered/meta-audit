@@ -14,7 +14,10 @@ export async function POST(request: Request) {
 
   const result = await prisma.suggestion.updateMany({
     where: { id: { in: ids } },
-    data: { status: action === "approve" ? "APPROVED" : "REJECTED" },
+    data:
+      action === "approve"
+        ? { status: "APPROVED", stagedAt: null, liveAt: null }
+        : { status: "REJECTED" },
   });
 
   return NextResponse.json({ updated: result.count });

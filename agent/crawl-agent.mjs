@@ -177,6 +177,37 @@ async function processSuggestionJob(job) {
   log(`Suggestion job ${job.id} complete`);
 }
 
+async function claimNextPublishJob() {
+  const res = await authedFetch("/api/agent/publish-jobs/next");
+  if (!res.ok) {
+    throw new Error(`GET /api/agent/publish-jobs/next failed: ${res.status} ${await res.text()}`);
+  }
+  const { job } = await res.json();
+  return job;
+}
+
+async function processPublishJob(job) {
+  log(`Claimed publish job ${job.id} (${job.action}) for client ${job.clientId}`);
+
+  let done = false;
+  while (!done) {
+    const res = await authedFetch(`/api/agent/publish-jobs/${job.id}/process-batch`, {
+      method: "POST",
+    });
+    const body = await res.json();
+
+    if (!res.ok) {
+      log(`Publish job ${job.id} failed: ${JSON.stringify(body)}`);
+      return;
+    }
+
+    done = body.done;
+    log(`Publish job ${job.id}: ${body.itemsProcessed}/${body.itemsTotal} processed`);
+  }
+
+  log(`Publish job ${job.id} complete`);
+}
+
 async function pollOnce() {
   const crawlJob = await claimNextJob();
   if (crawlJob) {
@@ -187,6 +218,12 @@ async function pollOnce() {
   const suggestionJob = await claimNextSuggestionJob();
   if (suggestionJob) {
     await processSuggestionJob(suggestionJob);
+    return;
+  }
+
+  const publishJob = await claimNextPublishJob();
+  if (publishJob) {
+    await processPublishJob(publishJob);
   }
 }
 
@@ -199,5 +236,5 @@ async function loop() {
   setTimeout(loop, POLL_INTERVAL_MS);
 }
 
-log(`Meta Audit agent started. Polling ${API_BASE_URL} every ${POLL_INTERVAL_MS}ms for crawl and suggestion jobs.`);
+log(`Meta Audit agent started. Polling ${API_BASE_URL} every ${POLL_INTERVAL_MS}ms for crawl, suggestion, and publish jobs.`);
 loop();

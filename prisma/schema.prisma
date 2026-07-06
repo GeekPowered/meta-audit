@@ -26,6 +26,7 @@ model Client {
   pages          Page[]
   crawlJobs      CrawlJob[]
   suggestionJobs SuggestionJob[]
+  publishJobs    PublishJob[]
 }
 
 model Page {
@@ -85,6 +86,12 @@ model Suggestion {
   status               SuggestionStatus @default(PENDING)
   editedTitle          String?
   editedDescription    String?
+  // Set once this suggestion's content has been written to Webflow (staged) /
+  // included in a site publish (live). Null means "still eligible" — the
+  // publish batch processor's query. Reset to null on re-approval so edited
+  // content that was already staged/live gets re-pushed.
+  stagedAt             DateTime?
+  liveAt               DateTime?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
@@ -147,6 +154,32 @@ model SuggestionJob {
   errorMessage   String?
   pagesTotal     Int       @default(0)
   pagesProcessed Int       @default(0)
+
+  @@index([clientId])
+  @@index([status])
+}
+
+enum PublishAction {
+  STAGE
+  GO_LIVE
+}
+
+// Drives Phase 6 (Webflow publish). A single synchronous request processing
+// hundreds of approved suggestions blew past both the serverless timeout and
+// Webflow's own rate limit (60 req/min) — this follows the same agent-polled
+// batch pattern as SuggestionJob so no single request has to survive long.
+model PublishJob {
+  id             String        @id @default(cuid())
+  clientId       String
+  client         Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  action         PublishAction
+  status         JobStatus     @default(QUEUED)
+  requestedAt    DateTime      @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  errorMessage   String?
+  itemsTotal     Int           @default(0)
+  itemsProcessed Int           @default(0)
 
   @@index([clientId])
   @@index([status])

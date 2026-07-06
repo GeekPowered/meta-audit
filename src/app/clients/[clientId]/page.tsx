@@ -9,8 +9,7 @@ import ReviewRow, { type ReviewRowData } from "./ReviewRow";
 
 type Client = { id: string; name: string; domain: string | null };
 type Job = { id: string; status: "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED"; errorMessage: string | null };
-type StageResult = { staged: number; failed: number; results: { url: string; result: string; error?: string }[] };
-type GoLiveResult = { collectionsPublished: number; pagesLive: number };
+type PublishJob = Job & { action: "STAGE" | "GO_LIVE"; itemsTotal: number; itemsProcessed: number };
 
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
 const PAGE_SIZE = 25;
@@ -25,6 +24,17 @@ function latestJobStatusText(jobs: Job[] | undefined): string {
 function pollWhileActive(jobs: Job[] | undefined): number {
   if (jobs && jobs.length > 0 && ACTIVE_STATUSES.has(jobs[0].status)) return 3000;
   return 0;
+}
+
+function latestPublishJob(jobs: PublishJob[] | undefined, action: "STAGE" | "GO_LIVE") {
+  return jobs?.find((j) => j.action === action);
+}
+
+function publishJobStatusText(job: PublishJob | undefined): string | null {
+  if (!job) return null;
+  if (job.status === "FAILED") return `failed: ${job.errorMessage ?? "unknown error"} (${job.itemsProcessed}/${job.itemsTotal})`;
+  if (job.status === "COMPLETE") return `done — ${job.itemsProcessed}/${job.itemsTotal} processed`;
+  return `${job.status.toLowerCase()} — ${job.itemsProcessed}/${job.itemsTotal} processed`;
 }
 
 export default function ClientPage() {
@@ -45,6 +55,11 @@ export default function ClientPage() {
     fetcher,
     { refreshInterval: pollWhileActive }
   );
+  const { data: publishJobs, mutate: mutatePublishJobs } = useSWR<PublishJob[]>(
+    `/api/clients/${clientId}/publish-jobs`,
+    fetcher,
+    { refreshInterval: pollWhileActive }
+  );
 
   const [severityFilter, setSeverityFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -52,10 +67,11 @@ export default function ClientPage() {
   const [sortBy, setSortBy] = useState<"severity" | "url">("severity");
   const [actionError, setActionError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const [staging, setStaging] = useState(false);
-  const [stageResult, setStageResult] = useState<StageResult | null>(null);
-  const [goingLive, setGoingLive] = useState(false);
-  const [goLiveResult, setGoLiveResult] = useState<GoLiveResult | null>(null);
+
+  const latestStageJob = latestPublishJob(publishJobs, "STAGE");
+  const latestGoLiveJob = latestPublishJob(publishJobs, "GO_LIVE");
+  const stagingActive = !!latestStageJob && ACTIVE_STATUSES.has(latestStageJob.status);
+  const goingLiveActive = !!latestGoLiveJob && ACTIVE_STATUSES.has(latestGoLiveJob.status);
 
   const flagTypes = useMemo(() => {
     const set = new Set<string>();
@@ -135,16 +151,11 @@ export default function ClientPage() {
 
   async function stageChanges() {
     setActionError(null);
-    setStageResult(null);
-    setStaging(true);
     try {
-      const result = await apiRequest<StageResult>(`/api/clients/${clientId}/publish`, "POST");
-      setStageResult(result);
-      mutateRows();
+      await apiRequest(`/api/clients/${clientId}/publish-jobs`, "POST", { action: "STAGE" });
+      mutatePublishJobs();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Staging failed");
-    } finally {
-      setStaging(false);
+      setActionError(err instanceof Error ? err.message : "Failed to start staging");
     }
   }
 
@@ -156,15 +167,11 @@ export default function ClientPage() {
     if (!confirmed) return;
 
     setActionError(null);
-    setGoLiveResult(null);
-    setGoingLive(true);
     try {
-      const result = await apiRequest<GoLiveResult>(`/api/clients/${clientId}/publish/go-live`, "POST");
-      setGoLiveResult(result);
+      await apiRequest(`/api/clients/${clientId}/publish-jobs`, "POST", { action: "GO_LIVE" });
+      mutatePublishJobs();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Go live failed");
-    } finally {
-      setGoingLive(false);
+      setActionError(err instanceof Error ? err.message : "Failed to start go-live");
     }
   }
 
@@ -200,42 +207,34 @@ export default function ClientPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={stageChanges}
-            disabled={staging || approvedCount === 0}
+            disabled={stagingActive || approvedCount === 0}
             className="rounded bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-40"
           >
-            {staging ? "Staging…" : `Stage Changes (${approvedCount} approved)`}
+            {stagingActive ? "Staging…" : `Stage Changes (${approvedCount} approved)`}
           </button>
-          <span className="text-xs text-zinc-600">Writes approved changes into Webflow as drafts. Not live yet.</span>
+          <span className="text-xs text-zinc-600">
+            Writes approved changes into Webflow as drafts. Not live yet. Runs in the background via the local
+            agent — hundreds of items are processed in small batches to stay under Webflow&apos;s rate limit.
+          </span>
         </div>
         <div className="mt-3 flex items-center gap-3">
           <button
             onClick={goLive}
-            disabled={goingLive || approvedCount === 0}
+            disabled={goingLiveActive || approvedCount === 0}
             className="rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-40"
           >
-            {goingLive ? "Publishing…" : "Go Live"}
+            {goingLiveActive ? "Publishing…" : "Go Live"}
           </button>
           <span className="text-xs text-zinc-600">
             Publishes the entire site — including anything else pending in the Designer.
           </span>
         </div>
 
-        {stageResult && (
-          <p className="mt-2 text-sm">
-            Staged {stageResult.staged}, failed {stageResult.failed}.
-            {stageResult.failed > 0 && (
-              <span className="text-red-700">
-                {" "}
-                Failed: {stageResult.results.filter((r) => r.result === "FAIL").map((r) => r.url).join(", ")}
-              </span>
-            )}
-          </p>
+        {publishJobStatusText(latestStageJob) && (
+          <p className="mt-2 text-sm">Stage: {publishJobStatusText(latestStageJob)}</p>
         )}
-        {goLiveResult && (
-          <p className="mt-2 text-sm">
-            Published {goLiveResult.pagesLive} page(s) live, across {goLiveResult.collectionsPublished} CMS
-            collection(s).
-          </p>
+        {publishJobStatusText(latestGoLiveJob) && (
+          <p className="mt-2 text-sm">Go live: {publishJobStatusText(latestGoLiveJob)}</p>
         )}
       </div>
 
