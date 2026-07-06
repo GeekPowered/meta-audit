@@ -102,11 +102,11 @@ export default function ClientPage() {
     }
   }
 
-  async function bulkApprove(severity: string) {
+  async function bulkApprove(severity?: string) {
     const ids = filteredRows
       .filter(
         (r) =>
-          r.maxSeverity === severity &&
+          (!severity || r.maxSeverity === severity) &&
           r.suggestion &&
           (r.suggestion.status === "PENDING" || r.suggestion.status === "EDITED")
       )
@@ -216,6 +216,12 @@ export default function ClientPage() {
               Bulk approve {sev.toLowerCase()}
             </button>
           ))}
+          <button
+            onClick={() => bulkApprove()}
+            className="rounded border border-zinc-300 px-2 py-1 text-xs font-medium hover:bg-zinc-50"
+          >
+            Bulk approve all
+          </button>
         </div>
       </div>
 
