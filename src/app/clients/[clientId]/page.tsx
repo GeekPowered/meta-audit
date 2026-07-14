@@ -7,7 +7,13 @@ import useSWR from "swr";
 import { fetcher, apiRequest } from "@/lib/apiClient";
 import ReviewRow, { type ReviewRowData } from "./ReviewRow";
 
-type Client = { id: string; name: string; domain: string | null };
+type Client = {
+  id: string;
+  name: string;
+  domain: string | null;
+  webflowSiteId: string | null;
+  webflowApiToken: string | null;
+};
 type Job = { id: string; status: "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED"; errorMessage: string | null };
 type PublishJob = Job & { action: "STAGE" | "GO_LIVE"; itemsTotal: number; itemsProcessed: number };
 
@@ -40,7 +46,7 @@ function publishJobStatusText(job: PublishJob | undefined): string | null {
 export default function ClientPage() {
   const { clientId } = useParams<{ clientId: string }>();
 
-  const { data: client } = useSWR<Client>(`/api/clients/${clientId}`, fetcher);
+  const { data: client, mutate: mutateClient } = useSWR<Client>(`/api/clients/${clientId}`, fetcher);
   const { data: rows, mutate: mutateRows } = useSWR<ReviewRowData[]>(
     `/api/clients/${clientId}/review`,
     fetcher
@@ -67,6 +73,12 @@ export default function ClientPage() {
   const [sortBy, setSortBy] = useState<"severity" | "url">("severity");
   const [actionError, setActionError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsDomain, setSettingsDomain] = useState("");
+  const [settingsWebflowSiteId, setSettingsWebflowSiteId] = useState("");
+  const [settingsWebflowApiToken, setSettingsWebflowApiToken] = useState("");
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   const latestStageJob = latestPublishJob(publishJobs, "STAGE");
   const latestGoLiveJob = latestPublishJob(publishJobs, "GO_LIVE");
@@ -175,6 +187,33 @@ export default function ClientPage() {
     }
   }
 
+  function openSettings() {
+    setSettingsDomain(client?.domain ?? "");
+    setSettingsWebflowSiteId(client?.webflowSiteId ?? "");
+    setSettingsWebflowApiToken(client?.webflowApiToken ?? "");
+    setSettingsError(null);
+    setSettingsOpen(true);
+  }
+
+  async function saveSettings(e: React.FormEvent) {
+    e.preventDefault();
+    setSettingsError(null);
+    setSavingSettings(true);
+    try {
+      await apiRequest(`/api/clients/${clientId}`, "PATCH", {
+        domain: settingsDomain || null,
+        webflowSiteId: settingsWebflowSiteId || null,
+        webflowApiToken: settingsWebflowApiToken || null,
+      });
+      mutateClient();
+      setSettingsOpen(false);
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-7xl w-full px-6 py-8">
       <Link href="/" className="text-sm text-zinc-500 hover:underline">
@@ -198,8 +237,58 @@ export default function ClientPage() {
             Generate Suggestions
           </button>
           <span className="text-xs text-zinc-500 w-24">{latestJobStatusText(suggestionJobs)}</span>
+          <button
+            onClick={() => (settingsOpen ? setSettingsOpen(false) : openSettings())}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50"
+          >
+            {settingsOpen ? "Cancel" : "Settings"}
+          </button>
         </div>
       </div>
+
+      {settingsOpen && (
+        <form onSubmit={saveSettings} className="mb-6 rounded border border-zinc-200 p-4 space-y-3">
+          <div>
+            <label className="block text-sm font-medium mb-1">Domain (crawl start URL)</label>
+            <input
+              value={settingsDomain}
+              onChange={(e) => setSettingsDomain(e.target.value)}
+              className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black"
+              placeholder="https://example.com"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Webflow Site ID</label>
+            <input
+              value={settingsWebflowSiteId}
+              onChange={(e) => setSettingsWebflowSiteId(e.target.value)}
+              className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black"
+              placeholder="Site Settings → General → Site ID"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Webflow API Token</label>
+            <input
+              value={settingsWebflowApiToken}
+              onChange={(e) => setSettingsWebflowApiToken(e.target.value)}
+              className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black font-mono"
+              placeholder="Site Settings → Apps & Integrations → API access"
+            />
+            <p className="mt-1 text-xs text-zinc-500">
+              Webflow tokens are scoped per-site — this client&apos;s token must be generated from this site&apos;s
+              own Apps &amp; Integrations tab, not copied from another client.
+            </p>
+          </div>
+          {settingsError && <p className="text-sm text-red-600">{settingsError}</p>}
+          <button
+            type="submit"
+            disabled={savingSettings}
+            className="rounded bg-black px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+          >
+            {savingSettings ? "Saving…" : "Save settings"}
+          </button>
+        </form>
+      )}
 
       {actionError && <p className="mb-4 text-sm text-red-600">{actionError}</p>}
 
