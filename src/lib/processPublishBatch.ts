@@ -32,6 +32,13 @@ export async function processPublishBatch(jobId: string) {
   }
   const webflowSiteId = job.client.webflowSiteId;
 
+  // Webflow tokens are scoped per-site — fall back to the shared env var only
+  // for clients set up before per-client tokens existed.
+  const token = job.client.webflowApiToken ?? process.env.WEBFLOW_API_TOKEN;
+  if (!token) {
+    throw new Error("client has no webflowApiToken set and WEBFLOW_API_TOKEN env var is unset");
+  }
+
   const suggestions = await prisma.suggestion.findMany({
     where: eligibleSuggestionsWhere(job.clientId, job.action),
     include: { page: true },
@@ -40,13 +47,13 @@ export async function processPublishBatch(jobId: string) {
 
   // Fetched once per batch call (not once per suggestion) — the original bug
   // that caused the timeout was resolveWebflowTarget re-fetching this per call.
-  const pages = suggestions.length > 0 ? await listAllPages(webflowSiteId) : [];
+  const pages = suggestions.length > 0 ? await listAllPages(token, webflowSiteId) : [];
 
   for (const suggestion of suggestions) {
     if (job.action === "STAGE") {
-      await stageOne(suggestion, pages);
+      await stageOne(token, suggestion, pages);
     } else {
-      await goLiveOne(suggestion, pages);
+      await goLiveOne(token, suggestion, pages);
     }
   }
 
@@ -60,7 +67,7 @@ export async function processPublishBatch(jobId: string) {
     // Finalize once, after every approved suggestion's CMS item (if any) has
     // been individually published — site publish isn't scoped to our changes,
     // so it only needs to run once at the end, not per suggestion.
-    await publishSite(webflowSiteId);
+    await publishSite(token, webflowSiteId);
   }
 
   await prisma.publishJob.update({
@@ -80,6 +87,7 @@ type SuggestionWithPage = Awaited<ReturnType<typeof prisma.suggestion.findMany>>
 };
 
 async function stageOne(
+  token: string,
   suggestion: SuggestionWithPage,
   pages: Awaited<ReturnType<typeof listAllPages>>
 ) {
@@ -92,7 +100,7 @@ async function stageOne(
   }
 
   try {
-    const target = await resolveWebflowTarget(pages, suggestion.page.url);
+    const target = await resolveWebflowTarget(token, pages, suggestion.page.url);
     if (!target) {
       await logAndAdvance(
         suggestion.id,
@@ -105,7 +113,7 @@ async function stageOne(
     }
 
     if (target.type === "page") {
-      await updatePageSeo(target.pageId, { title, description });
+      await updatePageSeo(token, target.pageId, { title, description });
       await logAndAdvance(
         suggestion.id,
         suggestion.pageId,
@@ -114,7 +122,7 @@ async function stageOne(
         "stagedAt"
       );
     } else {
-      await updateCollectionItemFields(target.collectionId, target.itemId, {
+      await updateCollectionItemFields(token, target.collectionId, target.itemId, {
         [target.titleField]: title,
         [target.descriptionField]: description,
       });
@@ -133,13 +141,14 @@ async function stageOne(
 }
 
 async function goLiveOne(
+  token: string,
   suggestion: SuggestionWithPage,
   pages: Awaited<ReturnType<typeof listAllPages>>
 ) {
   try {
-    const target = await resolveWebflowTarget(pages, suggestion.page.url);
+    const target = await resolveWebflowTarget(token, pages, suggestion.page.url);
     if (target?.type === "cmsItem") {
-      await publishCollectionItems(target.collectionId, [target.itemId]);
+      await publishCollectionItems(token, target.collectionId, [target.itemId]);
       await logAndAdvance(
         suggestion.id,
         suggestion.pageId,

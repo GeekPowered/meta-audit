@@ -27,7 +27,11 @@ function extractBoundFieldSlug(bindingString: string | undefined): string | null
 // callers processing many suggestions must fetch it ONCE and reuse it. Fetching
 // per-call turned into an N+1 (451 approved suggestions = 451 full paginated
 // re-fetches of the site's page list), which is what timed out the publish routes.
-export async function resolveWebflowTarget(pages: WebflowPage[], pageUrl: string): Promise<WebflowTarget> {
+export async function resolveWebflowTarget(
+  token: string,
+  pages: WebflowPage[],
+  pageUrl: string
+): Promise<WebflowTarget> {
   let pathname: string;
   try {
     pathname = new URL(pageUrl).pathname.replace(/\/+$/, "") || "/";
@@ -54,7 +58,7 @@ export async function resolveWebflowTarget(pages: WebflowPage[], pageUrl: string
     const descriptionField = extractBoundFieldSlug(templatePage.seo?.description);
     if (!titleField || !descriptionField) continue;
 
-    const item = await findCollectionItemBySlug(templatePage.collectionId, itemSlug);
+    const item = await findCollectionItemBySlug(token, templatePage.collectionId, itemSlug);
     if (!item) continue;
 
     return {

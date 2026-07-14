@@ -16,6 +16,11 @@ model Client {
   // Crawl start URL for Screaming Frog, e.g. "https://example.com" (Phase 2).
   domain            String?
   webflowSiteId     String?
+  // Webflow API tokens are scoped per-site (Site Settings > Apps & Integrations),
+  // not per-workspace — one client's token can't touch another client's site.
+  // Falls back to the WEBFLOW_API_TOKEN env var when unset, for the original
+  // client set up before this field existed.
+  webflowApiToken   String?
   gscPropertyId     String?
   // Map of page path -> target keyword, e.g. { "/services/roofing": "roof repair phoenix" }
   keywordMap        Json?
