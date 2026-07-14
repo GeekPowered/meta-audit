@@ -15,10 +15,17 @@ const BATCH_SIZE = 5;
 // (60 req/min) is easy to blow through, and small sequential batches called
 // repeatedly by the agent keep each request short without needing to tune
 // concurrency against a shared external limit.
-const eligibleSuggestionsWhere = (clientId: string, action: "STAGE" | "GO_LIVE") => ({
+//
+// GO_LIVE additionally requires stagedAt to be set — otherwise a suggestion
+// approved but never staged would get "published" as whatever content is
+// already sitting in Webflow (the old, un-updated title/description), while
+// our tracking marks it liveAt as if the new content actually went out.
+export const eligibleSuggestionsWhere = (clientId: string, action: "STAGE" | "GO_LIVE") => ({
   status: "APPROVED" as const,
   page: { clientId },
-  ...(action === "STAGE" ? { stagedAt: null } : { liveAt: null }),
+  ...(action === "STAGE"
+    ? { stagedAt: null }
+    : { stagedAt: { not: null }, liveAt: null }),
 });
 
 export async function processPublishBatch(jobId: string) {

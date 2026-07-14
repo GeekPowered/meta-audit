@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { eligibleSuggestionsWhere } from "@/lib/processPublishBatch";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -30,11 +31,7 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   const itemsTotal = await prisma.suggestion.count({
-    where: {
-      status: "APPROVED",
-      page: { clientId: id },
-      ...(action === "STAGE" ? { stagedAt: null } : { liveAt: null }),
-    },
+    where: eligibleSuggestionsWhere(id, action),
   });
 
   if (itemsTotal === 0) {
